@@ -565,9 +565,7 @@ function openBulkModal(presetParent){
   mbody.innerHTML='<h3>Bulk add names</h3>'+ 
     '<div class="note">For Excel, copy a column or selected cells and paste here. Each cell/row becomes one source, so &quot;John Smith&quot; stays together. Use Space mode only for one-word codenames.</div>'+ 
     '<label>Paste mode</label><select id="b-mode" onchange="updateBulkCount()"><option value="excel" selected>Excel cells / rows — keep spaces inside names</option><option value="lines">One entry per line only</option><option value="spaces">Split by spaces/commas — one-word codenames</option></select>'+ 
-    '<label>Names / codenames *</label><textarea id="b-names" placeholder="John Smith
-Mary Jones
-Ahmed Al Hassan" style="min-height:130px" oninput="updateBulkCount()"></textarea>'+ 
+    '<label>Names / codenames *</label><textarea id="b-names" placeholder="John Smith&#10;Mary Jones&#10;Ahmed Al Hassan" style="min-height:130px" oninput="updateBulkCount()"></textarea>'+ 
     '<div id="b-count" style="font-size:12px;color:var(--steel);margin-top:6px">0 entries detected</div>'+ 
     '<label>Reports to</label><select id="b-parent">'+parentOpts+'</select>'+ 
     '<div class="row2"><div><label>Place</label><input id="b-loc" placeholder="city / area"></div><div><label>Status</label><select id="b-status">'+opt(STATUS,'dev')+'</select></div></div>'+ 
