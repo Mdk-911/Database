@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v5-places-zoom-tree';
+const CACHE_NAME = 'network-manager-offline-v6-subtree-focus';
 const ASSETS = [
   './',
   './index.html',

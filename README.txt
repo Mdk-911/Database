@@ -21,3 +21,6 @@ Update: Excel-safe bulk paste
 - Bulk add now defaults to Excel cells / rows mode.
 - First-name + last-name values stay together.
 - Split-by-spaces mode is still available only when you want one-word codenames.
+
+
+Update (v6): Tap a name in Places to re-root the tree to that branch (shows only it and its descendants). Use "Full tree" in the selection bar to return to the whole network. Expand all / Collapse now keep the current root. Pinch or the -/+ buttons zoom in to read crowded names.

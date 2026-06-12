@@ -150,7 +150,9 @@ table.matrix tbody tr{border-bottom:1px solid var(--line)}
 .qrow{display:flex;justify-content:space-between;align-items:center;background:var(--panel2);border-radius:8px;padding:8px 11px;margin-bottom:5px;font-size:13px;cursor:pointer}
 .qrow:hover{background:var(--panel3)}
 .qstate{font-size:11px;padding:2px 8px;border-radius:12px}
-.mapbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}.mapbar select{flex:1}
+.mapbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.mapbar select{flex:1;min-width:150px}
+.mapzoom{display:flex;gap:6px;align-items:center}.mapzoom .btn{min-width:38px;padding:8px 10px}
+.treeSelection{display:none;margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;align-items:center;justify-content:space-between;gap:10px}.treeSelection.on{display:flex}.treeSelection .name{font-family:'SFMono-Regular','Menlo','Consolas',monospace;font-weight:700}.treeSelection .hint{font-size:11px;color:var(--steel);margin-top:2px}
 #mapWrap{background:radial-gradient(circle at 50% 25%,#141B23,#0A0E12);border:1px solid var(--line);border-radius:12px;overflow:hidden;touch-action:none}
 #map{display:block;width:100%;background:linear-gradient(rgba(46,59,73,.22) 1px,transparent 1px) 0 0/100% 28px,linear-gradient(90deg,rgba(46,59,73,.22) 1px,transparent 1px) 0 0/28px 100%;touch-action:none}
 .placechips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
@@ -241,9 +243,10 @@ table.matrix tbody tr{border-bottom:1px solid var(--line)}
 </section>
 
 <section class="view" id="v-places">
-  <div class="mapbar"><select id="placeFilter" onchange="renderPlaces()"></select><button class="btn ghost sm" onclick="expandAll()">Expand all</button><button class="btn ghost sm" onclick="collapseAll()">Collapse</button><button class="btn ghost sm" onclick="fitTree();paintTree()">Fit</button></div>
+  <div class="mapbar"><select id="placeFilter" onchange="renderPlaces()"></select><button class="btn ghost sm" onclick="expandAll()">Expand all</button><button class="btn ghost sm" onclick="collapseAll()">Collapse</button><button class="btn ghost sm" onclick="fitTree();paintTree()">Fit</button><span class="mapzoom"><button class="btn ghost sm" onclick="zoomMap(0.8)">−</button><button class="btn ghost sm" onclick="zoomMap(1.25)">+</button></span></div>
   <div id="mapWrap"><svg id="map"></svg></div>
-  <div style="font-size:11px;color:var(--steel);margin-top:8px">Tap a node to open its profile · tap the +/− circle to expand or collapse a branch · drag to pan · scroll to zoom · amber dashed = cross-place link</div>
+  <div style="font-size:11px;color:var(--steel);margin-top:8px">Tap a name to open its branch as the tree root · tap +/− to collapse or expand a branch · drag to pan · pinch or −/+ to zoom · "Full tree" returns to the whole network · amber dashed = cross-place link</div>
+  <div class="treeSelection" id="treeSelection"></div>
   <div class="placechips" id="placeChips"></div>
 </section>
 
@@ -416,8 +419,9 @@ function doSkip(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.skips=s.skip
 function unskip(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.skips=(s.skips||[]).filter(x=>x!==n);afterCycle(srcId);}
 function clearCycle(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.payments=(s.payments||[]).filter(p=>!(p.kind==='monthly'&&+p.cycle===n));afterCycle(srcId);}
 
-let treeNodes=[],collapsed=new Set(),mapW=700,mapH=480,panX=0,panY=0,zoom=1,panning=false,startPt=null,startPan=null,moved=false,tapNode=null,tapTog=null;
-const NW=98,NH=36,HG=20,VG=70;
+let treeNodes=[],collapsed=new Set(),selectedTreeId=null,treeRoot=null,mapW=700,mapH=520,panX=0,panY=0,zoom=1,panning=false,startPt=null,startPan=null,moved=false,tapNode=null,tapTog=null;
+let activePointers=new Map(),pinchStartDist=0,pinchStartZoom=1,pinchWorld=null;
+const NW=136,NH=46,HG=28,VG=84;
 function renderPlaces(){
   const sel=document.getElementById('placeFilter');const places=distinctPlaces();
   const keys=Object.keys(places).sort((a,b)=>places[b]-places[a]);
@@ -425,13 +429,14 @@ function renderPlaces(){
   document.getElementById('placeChips').innerHTML=keys.map(p=>'<div class="placechip '+(sel.value===p?'on':'')+'" onclick="selectPlace(\''+esc(p).replace(/'/g,"\\'")+'\')">'+esc(p)+' <span class="cnt">'+places[p]+'</span></div>').join('');
   drawNetMap(sel.value);
 }
-function selectPlace(p){const sel=document.getElementById('placeFilter');sel.value=(sel.value===p?'':p);renderPlaces();}
+function selectPlace(p){const sel=document.getElementById('placeFilter');sel.value=(sel.value===p?'':p);treeRoot=null;selectedTreeId=null;renderPlaces();}
 function curFilter(){return document.getElementById('placeFilter').value;}
 function layoutTree(filter){
   const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);
   const setIds=new Set(set.map(s=>s.id));
   const kidsIn=id=>set.filter(s=>s.parent===id).map(s=>s.id);
-  const roots=set.filter(s=>!s.parent||!setIds.has(s.parent)).map(s=>s.id);
+  if(treeRoot&&!setIds.has(treeRoot))treeRoot=null;
+  const roots=(treeRoot&&setIds.has(treeRoot))?[treeRoot]:set.filter(s=>!s.parent||!setIds.has(s.parent)).map(s=>s.id);
   treeNodes=[];let cursor=0;
   const place=(id,depth)=>{
     const node=DB.sources.find(s=>s.id===id);
@@ -450,16 +455,32 @@ function fitTree(){
   const xs=treeNodes.map(n=>n.x),ys=treeNodes.map(n=>n.y);
   const minX=Math.min(...xs)-NW/2,maxX=Math.max(...xs)+NW/2,minY=Math.min(...ys)-NH,maxY=Math.max(...ys)+NH;
   const tw=Math.max(1,maxX-minX),th=Math.max(1,maxY-minY);
-  zoom=Math.max(.35,Math.min(1.15,Math.min((mapW-50)/tw,(mapH-50)/th)));
+  zoom=Math.max(.25,Math.min(1.35,Math.min((mapW-50)/tw,(mapH-50)/th)));
   const cx=(minX+maxX)/2,cy=(minY+maxY)/2;panX=mapW/2-cx*zoom;panY=mapH/2-cy*zoom;
 }
 function drawNetMap(filter){
-  const svg=document.getElementById('map');mapW=svg.clientWidth||svg.parentElement.clientWidth||700;mapH=480;
+  const svg=document.getElementById('map');mapW=svg.clientWidth||svg.parentElement.clientWidth||700;mapH=560;
   svg.setAttribute('viewBox','0 0 '+mapW+' '+mapH);svg.setAttribute('height',mapH);
   if(!layoutTree(filter)){panX=0;panY=0;zoom=1;svg.innerHTML='<text x="'+(mapW/2)+'" y="'+(mapH/2)+'" fill="#6E7B87" text-anchor="middle" font-size="13">'+(filter?'No members in this place':'No sources yet')+'</text>';return;}
   fitTree();paintTree();
 }
 function relayout(){layoutTree(curFilter());paintTree();}
+function setStageTransform(){const st=document.getElementById('stage');if(st)st.setAttribute('transform','translate('+panX+' '+panY+') scale('+zoom+')');}
+function zoomAt(vx,vy,factor){const wx=(vx-panX)/zoom,wy=(vy-panY)/zoom;zoom=Math.max(.25,Math.min(6,zoom*factor));panX=vx-wx*zoom;panY=vy-wy*zoom;setStageTransform();}
+function zoomMap(factor){const svg=document.getElementById('map');const {r,sx,sy}=svgScale();zoomAt((r.width/2)*sx,(r.height/2)*sy,factor);}
+function labelLines(txt){txt=(txt||'').toString();if(txt.length<=17)return [txt];const cut=txt.lastIndexOf(' ',17);const i=cut>6?cut:17;return [txt.slice(0,i).trim(),txt.slice(i).trim().slice(0,18)+(txt.slice(i).trim().length>18?'…':'')].filter(Boolean);}
+function expandAncestors(id){let s=DB.sources.find(x=>x.id===id);while(s&&s.parent){collapsed.delete(s.parent);s=DB.sources.find(x=>x.id===s.parent);}}
+function focusTreeNode(id){
+  selectedTreeId=id;
+  const src=DB.sources.find(x=>x.id===id);if(!src)return;
+  // if the tapped node is in a place we're not viewing, drop the place filter so its branch is visible
+  if(curFilter()&&placeOf(src)!==curFilter()){document.getElementById('placeFilter').value='';}
+  const hasKids=DB.sources.some(s=>s.parent===id);
+  if(hasKids){treeRoot=id;collapsed.delete(id);renderPlaces();}
+  else{expandAncestors(id);layoutTree(curFilter());const n=treeNodes.find(x=>x.id===id);if(n){panX=mapW/2-n.x*zoom;panY=mapH/2-n.y*zoom;}paintTree();}
+}
+function showFullTree(){treeRoot=null;selectedTreeId=null;drawNetMap(curFilter());}
+function updateTreeSelection(){const box=document.getElementById('treeSelection');if(!box)return;const s=DB.sources.find(x=>x.id===selectedTreeId);if(!s&&!treeRoot){box.classList.remove('on');box.innerHTML='';return;}box.classList.add('on');const r=DB.sources.find(x=>x.id===treeRoot);box.innerHTML='<div><div class="name">'+esc((r||s||{}).code||'')+'</div><div class="hint">'+(treeRoot?'Showing this branch only':'Selected in map')+'</div></div><div style="display:flex;gap:6px">'+(treeRoot?'<button class="btn ghost sm" onclick="showFullTree()">Full tree</button>':'')+'<button class="btn ghost sm" onclick="openDetail(\''+((s||r).id)+'\')">Profile</button></div>';}
 function paintTree(){
   const svg=document.getElementById('map');const pos=Object.fromEntries(treeNodes.map(n=>[n.id,n]));
   let g='';
@@ -467,19 +488,26 @@ function paintTree(){
     const cross=placeOf(DB.sources.find(s=>s.id===kid))!==placeOf(DB.sources.find(s=>s.id===p.id));
     const py=p.y+NH/2,cy=c.y-NH/2,my=py+(cy-py)*0.5;
     g+='<path d="M'+p.x+' '+py+' V '+my+' H '+c.x+' V '+cy+'" fill="none" stroke="'+(cross?'#D99A35':'#33414F')+'" stroke-width="1.5" '+(cross?'stroke-dasharray="5 3"':'')+'/>';});});
-  treeNodes.forEach(n=>{const col=STCOLOR[n.status]||'#6E7B87';const isP=!n.parent;const lbl=n.code.length>11?n.code.slice(0,11)+'…':n.code;
+  treeNodes.forEach(n=>{const col=STCOLOR[n.status]||'#6E7B87';const isP=!n.parent;const isSel=n.id===selectedTreeId;const lines=labelLines(n.code);let txt='';
+    lines.forEach((ln,i)=>{txt+='<text x="'+n.x+'" y="'+(n.y+(lines.length===1?4:(i?10:-4)))+'" fill="#E8E6DF" font-size="11.5" font-family="SFMono-Regular,Menlo,Consolas,monospace" text-anchor="middle">'+esc(ln)+'</text>';});
     g+='<g class="tnode" data-id="'+n.id+'" style="cursor:pointer">'+
-      '<rect x="'+(n.x-NW/2)+'" y="'+(n.y-NH/2)+'" width="'+NW+'" height="'+NH+'" rx="9" fill="#11161D" stroke="'+col+'" stroke-width="'+(isP?2:1.2)+'"/>'+
-      '<rect x="'+(n.x-NW/2)+'" y="'+(n.y-NH/2)+'" width="5" height="'+NH+'" rx="2.5" fill="'+col+'"/>'+
-      '<text x="'+n.x+'" y="'+(n.y+4)+'" fill="#E8E6DF" font-size="11.5" font-family="SFMono-Regular,Menlo,Consolas,monospace" text-anchor="middle">'+esc(lbl)+'</text></g>';
-    if(n.hasKids){const ty=n.y+NH/2+2;g+='<g class="ttoggle" data-id="'+n.id+'" style="cursor:pointer"><circle cx="'+n.x+'" cy="'+ty+'" r="9.5" fill="#0C1117" stroke="'+col+'" stroke-width="1.4"/><text x="'+n.x+'" y="'+(ty+4.5)+'" fill="'+col+'" font-size="14" font-weight="700" text-anchor="middle">'+(n.isCol?'+':'−')+'</text>'+(n.isCol?'<text x="'+(n.x+15)+'" y="'+(ty+4)+'" fill="#6E7B87" font-size="10" font-family="IBM Plex Mono" text-anchor="start">'+n.kids.length+'</text>':'')+'</g>';}
+      '<rect x="'+(n.x-NW/2)+'" y="'+(n.y-NH/2)+'" width="'+NW+'" height="'+NH+'" rx="10" fill="#11161D" stroke="'+(isSel?'#43B0A8':col)+'" stroke-width="'+(isSel?3:(isP?2:1.2))+'"/>'+
+      '<rect x="'+(n.x-NW/2)+'" y="'+(n.y-NH/2)+'" width="5" height="'+NH+'" rx="2.5" fill="'+col+'"/>'+txt+'</g>';
+    if(n.hasKids){const ty=n.y+NH/2+3;g+='<g class="ttoggle" data-id="'+n.id+'" style="cursor:pointer"><circle cx="'+n.x+'" cy="'+ty+'" r="10.5" fill="#0C1117" stroke="'+col+'" stroke-width="1.4"/><text x="'+n.x+'" y="'+(ty+4.5)+'" fill="'+col+'" font-size="15" font-weight="700" text-anchor="middle">'+(n.isCol?'+':'−')+'</text>'+(n.isCol?'<text x="'+(n.x+16)+'" y="'+(ty+4)+'" fill="#6E7B87" font-size="10" font-family="SFMono-Regular,Menlo,Consolas,monospace" text-anchor="start">'+n.kids.length+'</text>':'')+'</g>';}
   });
-  svg.innerHTML='<g id="stage" transform="translate('+panX+' '+panY+') scale('+zoom+')">'+g+'</g>';
+  svg.innerHTML='<g id="stage" transform="translate('+panX+' '+panY+') scale('+zoom+')">'+g+'</g>';updateTreeSelection();
 }
 function svgScale(){const svg=document.getElementById('map');const r=svg.getBoundingClientRect();return {sx:mapW/r.width,sy:mapH/r.height,r};}
 function setupMap(){
   const svg=document.getElementById('map');
+  const ptrs=()=>Array.from(activePointers.values());
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  const viewportPoint=p=>{const {sx,sy,r}=svgScale();return {x:(p.x-r.left)*sx,y:(p.y-r.top)*sy};};
   svg.addEventListener('pointerdown',e=>{
+    activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const all=ptrs();
+    if(all.length===2){const m=mid(all[0],all[1]);const v=viewportPoint(m);pinchStartDist=dist(all[0],all[1]);pinchStartZoom=zoom;pinchWorld={x:(v.x-panX)/zoom,y:(v.y-panY)/zoom};moved=true;return;}
     startPt={x:e.clientX,y:e.clientY};moved=false;
     const tg=e.target.closest('.ttoggle'),nd=e.target.closest('.tnode');
     tapTog=tg?tg.dataset.id:null;tapNode=nd?nd.dataset.id:null;
@@ -487,21 +515,32 @@ function setupMap(){
     try{svg.setPointerCapture(e.pointerId);}catch(_){}
   });
   svg.addEventListener('pointermove',e=>{
-    if(!panning)return;
+    if(activePointers.has(e.pointerId))activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const all=ptrs();
+    if(all.length>=2&&pinchStartDist){
+      const m=mid(all[0],all[1]);const v=viewportPoint(m);const factor=dist(all[0],all[1])/pinchStartDist;
+      zoom=Math.max(.25,Math.min(6,pinchStartZoom*factor));
+      panX=v.x-pinchWorld.x*zoom;panY=v.y-pinchWorld.y*zoom;setStageTransform();moved=true;return;
+    }
+    if(!panning||!startPt)return;
     if(Math.hypot(e.clientX-startPt.x,e.clientY-startPt.y)>4)moved=true;
     const {sx,sy}=svgScale();
     panX=startPan.x+(e.clientX-startPt.x)*sx;panY=startPan.y+(e.clientY-startPt.y)*sy;
-    const st=document.getElementById('stage');if(st)st.setAttribute('transform','translate('+panX+' '+panY+') scale('+zoom+')');
+    setStageTransform();
   });
-  svg.addEventListener('pointerup',()=>{
-    if(!moved){if(tapTog){collapsed.has(tapTog)?collapsed.delete(tapTog):collapsed.add(tapTog);relayout();}else if(tapNode){openDetail(tapNode);}}
+  const endPointer=e=>{
+    activePointers.delete(e.pointerId);
+    if(!moved){if(tapTog){collapsed.has(tapTog)?collapsed.delete(tapTog):collapsed.add(tapTog);relayout();}else if(tapNode){focusTreeNode(tapNode);}}
+    if(activePointers.size<2){pinchStartDist=0;pinchWorld=null;}
     panning=false;tapNode=tapTog=null;
-  });
-  svg.addEventListener('pointercancel',()=>{panning=false;});
-  svg.addEventListener('wheel',e=>{e.preventDefault();const {sx,sy,r}=svgScale();const vx=(e.clientX-r.left)*sx,vy=(e.clientY-r.top)*sy;const wx=(vx-panX)/zoom,wy=(vy-panY)/zoom;zoom=Math.max(.35,Math.min(2.6,zoom*(e.deltaY<0?1.12:0.9)));panX=vx-wx*zoom;panY=vy-wy*zoom;const st=document.getElementById('stage');if(st)st.setAttribute('transform','translate('+panX+' '+panY+') scale('+zoom+')');},{passive:false});
+  };
+  svg.addEventListener('pointerup',endPointer);
+  svg.addEventListener('pointercancel',endPointer);
+  svg.addEventListener('wheel',e=>{e.preventDefault();const {sx,sy,r}=svgScale();const vx=(e.clientX-r.left)*sx,vy=(e.clientY-r.top)*sy;zoomAt(vx,vy,e.deltaY<0?1.18:0.85);},{passive:false});
 }
-function expandAll(){collapsed.clear();drawNetMap(curFilter());}
-function collapseAll(){treeNodes.forEach(n=>{if(n.hasKids&&n.parent)collapsed.add(n.id);});relayout();}
+function displayedRootIds(filter){const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);const setIds=new Set(set.map(s=>s.id));if(treeRoot&&setIds.has(treeRoot))return[treeRoot];return set.filter(s=>!s.parent||!setIds.has(s.parent)).map(s=>s.id);}
+function expandAll(){collapsed.clear();layoutTree(curFilter());fitTree();paintTree();}
+function collapseAll(){const filter=curFilter();const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);const roots=new Set(displayedRootIds(filter));set.forEach(s=>{if(set.some(x=>x.parent===s.id)&&!roots.has(s.id))collapsed.add(s.id);});layoutTree(filter);fitTree();paintTree();}
 
 
 const mb=document.getElementById('modalBack'),mbody=document.getElementById('modalBody');
