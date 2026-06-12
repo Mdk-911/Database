@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v6-subtree-focus';
+const CACHE_NAME = 'network-manager-offline-v7-tree-toggle';
 const ASSETS = [
   './',
   './index.html',
