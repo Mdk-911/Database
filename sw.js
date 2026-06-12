@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v4-excel-bulk-fixed';
+const CACHE_NAME = 'network-manager-offline-v5-places-zoom-tree';
 const ASSETS = [
   './',
   './index.html',
