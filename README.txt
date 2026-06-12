@@ -12,3 +12,12 @@ Important:
 - Data is stored in Safari/WebKit localStorage for this exact origin. Changing the URL/domain creates a separate database.
 - Use Export (encrypted) regularly. iOS can remove website storage under pressure or if site data is cleared.
 - The Google Fonts dependency was removed so the app has no network dependency after install.
+
+
+UPDATE: This version adds Sources → Bulk. Paste names separated by spaces, commas, or new lines, choose shared defaults, then tap Add all.
+
+
+Update: Excel-safe bulk paste
+- Bulk add now defaults to Excel cells / rows mode.
+- First-name + last-name values stay together.
+- Split-by-spaces mode is still available only when you want one-word codenames.

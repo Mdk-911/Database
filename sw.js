@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v1';
+const CACHE_NAME = 'network-manager-offline-v3-excel-bulk';
 const ASSETS = [
   './',
   './index.html',
