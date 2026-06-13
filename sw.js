@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v7-tree-toggle';
+const CACHE_NAME = 'network-manager-offline-v8-principal-balances';
 const ASSETS = [
   './',
   './index.html',

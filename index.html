@@ -77,6 +77,15 @@ textarea{resize:vertical;min-height:54px}
 .bar .track{flex:1;height:7px;background:var(--panel2);border-radius:4px;overflow:hidden}
 .bar .track i{display:block;height:100%}
 .bar .num{min-width:58px;text-align:right;font-family:'SFMono-Regular','Menlo','Consolas',monospace;color:var(--steel);font-size:12px}
+.pbal{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line)}
+.pbal:last-child{border-bottom:none}
+.pbal-id{display:flex;align-items:center;gap:9px;cursor:pointer;min-width:0;flex:1}
+.pbal-id:hover .pbal-code{color:var(--teal)}
+.pbal-code{font-weight:700;font-family:'SFMono-Regular','Menlo','Consolas',monospace;font-size:14.5px}
+.pbal-sub{font-size:11px;color:var(--steel);margin-top:2px}
+.pbal-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.pbal-bal{font-weight:700;font-size:16px;color:var(--green)}
+.pbal-bal.neg{color:var(--red)}
 .toolbar{display:flex;gap:8px;margin-bottom:13px;align-items:center}
 .toolbar input{flex:1}.toolbar select{width:auto}
 .scard{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden}
@@ -195,10 +204,11 @@ table.matrix tbody tr{border-bottom:1px solid var(--line)}
 <div class="wrap">
 <section class="view active" id="v-dash">
   <div class="fundbar">
-    <div class="balwrap"><div class="lbl">Fund balance</div><div class="bal mono" id="fundBal">0</div>
+    <div class="balwrap"><div class="lbl">Main balance — all principals combined</div><div class="bal mono" id="fundBal">0</div>
       <div class="sub"><span>Deposits: <b id="fundIn">0</b></span><span>Spent: <b id="fundOut">0</b></span><span>Monthly commitment: <b id="fundMonthly">0</b></span></div></div>
     <div class="btnrow" style="margin-top:0"><button class="btn gold sm" onclick="openDeposit()">+ Deposit</button><button class="btn ghost sm" onclick="nav('monitor')">Monitor</button></div>
   </div>
+  <div class="block"><h3>Principal balances</h3><div id="principalBalances"></div></div>
   <div class="kpis">
     <div class="kpi"><div class="n" id="k-total">0</div><div class="l">Total members</div></div>
     <div class="kpi"><div class="n" id="k-principal" style="color:var(--teal)">0</div><div class="l">Principals</div></div>
@@ -269,6 +279,8 @@ const norm=s=>normDigits(s).toLowerCase().trim();
 let DB={sources:[],deposits:[],currency:'USD'};
 function load(){const r=store.get('network_db');if(r){try{DB=JSON.parse(r);DB.deposits=DB.deposits||[];}catch(e){}}}
 function save(){store.set('network_db',JSON.stringify(DB));}
+function saveUI(){try{store.set('network_ui',JSON.stringify({collapsed:[...collapsed]}));}catch(_){}}
+function loadUI(){try{const u=JSON.parse(store.get('network_ui')||'{}');if(Array.isArray(u.collapsed))collapsed=new Set(u.collapsed);}catch(_){}}
 load();
 const STATUS={dev:'Developing',active:'Active',dormant:'Dormant',cutout:'Cut-out',burned:'Burned'};
 const STCOLOR={dev:'#8B7BC2',active:'#5FA871',dormant:'#6E7B87',cutout:'#D99A35',burned:'#CC5249'};
@@ -285,6 +297,10 @@ function networkTotal(id){let t=srcTotal(DB.sources.find(s=>s.id===id));children
 const allPayments=()=>DB.sources.flatMap(s=>(s.payments||[]));
 const totalOut=()=>allPayments().reduce((a,p)=>a+(+p.amount||0),0);
 const totalIn=()=>DB.deposits.reduce((a,d)=>a+(+d.amount||0),0);
+function principalOf(id){let s=DB.sources.find(x=>x.id===id);while(s&&s.parent){const p=DB.sources.find(x=>x.id===s.parent);if(!p)break;s=p;}return s?s.id:null;}
+const depositsFor=pid=>DB.deposits.filter(d=>d.principal===pid).reduce((a,d)=>a+(+d.amount||0),0);
+const balanceFor=pid=>depositsFor(pid)-networkTotal(pid);
+const unallocatedIn=()=>DB.deposits.filter(d=>!d.principal||!DB.sources.some(s=>s.id===d.principal&&!s.parent)).reduce((a,d)=>a+(+d.amount||0),0);
 const monthlyCommit=()=>DB.sources.filter(s=>s.status!=='burned'&&s.monthlyPay>0).reduce((a,s)=>a+(+s.monthlyPay||0),0);
 const codeExists=(code,exclId)=>DB.sources.some(s=>s.id!==exclId&&norm(s.code)===norm(code));
 const placeOf=s=>(s.loc||'').trim()||NOLOC;
@@ -321,6 +337,12 @@ function renderDash(){
   document.getElementById('topSpend').innerHTML=tops.length?tops.map(([p,t])=>bar(p.code,t,maxT,'var(--gold)',fmt(t))).join(''):'<div class="empty">No payments yet</div>';
   const locs=distinctPlaces();const le=Object.entries(locs).sort((a,b)=>b[1]-a[1]);const maxL=Math.max(1,...le.map(e=>e[1]));
   document.getElementById('byLoc').innerHTML=le.length?le.map(([k,v])=>bar('⌖ '+k,v,maxL,'var(--blue)',v)).join(''):'<div class="empty">No locations</div>';
+  const pbox=document.getElementById('principalBalances');const ps=principals();
+  let rows=ps.map(p=>{const dep=depositsFor(p.id),sp=networkTotal(p.id),b=dep-sp;
+    return '<div class="pbal"><div class="pbal-id" onclick="openDetail(\''+p.id+'\')"><span class="statusdot" style="background:'+STCOLOR[p.status]+'"></span><div><div class="pbal-code">'+esc(p.code)+'</div><div class="pbal-sub">in <span class="mono">'+fmt(dep)+'</span> · out <span class="mono">'+fmt(sp)+'</span></div></div></div><div class="pbal-right"><div class="pbal-bal mono'+(b<0?' neg':'')+'">'+fmt(b)+'</div><button class="paybtn" onclick="event.stopPropagation();openDeposit(\''+p.id+'\')">+ Deposit</button></div></div>';}).join('');
+  const un=unallocatedIn();
+  if(un>0)rows+='<div class="pbal"><div class="pbal-id"><span class="statusdot" style="background:var(--steel)"></span><div><div class="pbal-code">Unallocated</div><div class="pbal-sub">deposits not tied to a principal</div></div></div><div class="pbal-right"><div class="pbal-bal mono">'+fmt(un)+'</div></div></div>';
+  pbox.innerHTML=ps.length?rows:'<div class="empty">No principals yet. Add a principal source, then deposit to its balance.</div>';
 }
 function bar(lab,val,max,color,disp){return '<div class="bar"><div class="lab">'+esc(lab)+'</div><div class="track"><i style="width:'+(val/max*100)+'%;background:'+color+'"></i></div><div class="num">'+disp+'</div></div>';}
 
@@ -358,7 +380,7 @@ function openDetail(id){
     '<div class="dhead"><span class="code">'+esc(s.code)+'</span><button class="btn ghost sm" onclick="nav(\'roster\')">Back</button></div>'+
     '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+statusPill(s.status)+(parent?'<span class="pill" style="border-color:var(--line2);color:var(--ink2)">sub-element of '+esc(parent.code)+'</span>':'<span class="pill" style="color:var(--teal);border-color:var(--teal-dim)">Principal source</span>')+(s.loc?'<span class="pill" style="border-color:var(--line2);color:var(--blue)">⌖ '+esc(s.loc)+'</span>':'')+'</div>'+
     '<div class="dgrid2">'+
-    '<div class="block full"><h3>Finance</h3><div class="fstat"><div class="c"><div class="v" style="color:var(--gold)">'+fmt(tot)+'</div><div class="l">Total paid</div></div><div class="c"><div class="v" style="color:var(--teal)">'+fmt(s.monthlyPay||0)+'</div><div class="l">Monthly payment</div></div><div class="c"><div class="v">'+fmt(thisMo)+'</div><div class="l">This month</div></div><div class="c"><div class="v" style="color:var(--gold)">'+fmt(nt)+'</div><div class="l">Network total</div></div></div><div class="btnrow" style="margin-top:10px"><button class="btn gold sm" onclick="openQuickPay(\''+id+'\')">+ Quick pay</button><button class="btn ghost sm" onclick="openPay(\''+id+'\')">Manual payment</button></div></div>'+
+    '<div class="block full"><h3>Finance'+(!s.parent?' — principal purse':'')+'</h3><div class="fstat">'+(!s.parent?'<div class="c"><div class="v mono'+(balanceFor(id)<0?' neg':'')+'" style="color:'+(balanceFor(id)<0?'var(--red)':'var(--green)')+'">'+fmt(balanceFor(id))+'</div><div class="l">Fund balance</div></div><div class="c"><div class="v" style="color:var(--teal)">'+fmt(depositsFor(id))+'</div><div class="l">Deposited</div></div>':'')+'<div class="c"><div class="v" style="color:var(--gold)">'+fmt(tot)+'</div><div class="l">Total paid</div></div><div class="c"><div class="v" style="color:var(--teal)">'+fmt(s.monthlyPay||0)+'</div><div class="l">Monthly payment</div></div><div class="c"><div class="v">'+fmt(thisMo)+'</div><div class="l">This month</div></div><div class="c"><div class="v" style="color:var(--gold)">'+fmt(nt)+'</div><div class="l">Network total</div></div></div><div class="btnrow" style="margin-top:10px">'+(!s.parent?'<button class="btn gold sm" onclick="openDeposit(\''+id+'\')">+ Deposit</button>':'')+'<button class="btn gold sm" onclick="openQuickPay(\''+id+'\')">+ Quick pay</button><button class="btn ghost sm" onclick="openPay(\''+id+'\')">Manual payment</button></div>'+(s.parent?'<div style="font-size:11px;color:var(--steel);margin-top:8px">Payments draw from <b>'+esc(nameOf(principalOf(id)))+'</b> · purse balance '+fmt(balanceFor(principalOf(id)))+'</div>':'')+'</div>'+
     stripHtml+
     '<div class="block"><h3>Payments ('+pays.length+')</h3>'+(pays.length?pays.slice(0,10).map(p=>'<div class="payrow"><div><div>'+(PAYKIND[p.kind]||'Payment')+(p.cycle?' #'+p.cycle:'')+'</div><div class="pm"><span class="mono">'+p.date+'</span>'+(p.note?'<span>'+esc(p.note)+'</span>':'')+'</div></div><div style="display:flex;align-items:center;gap:8px"><span class="amt">'+fmt(p.amount)+'</span><span style="color:var(--red);cursor:pointer;padding:0 4px" onclick="delPay(\''+id+'\',\''+p.id+'\')">✕</span></div></div>').join(''):'<div class="empty">No payments</div>')+'</div>'+
     '<div class="block"><div class="kv"><div class="k">Place</div><div class="v">'+(s.loc?'⌖ '+esc(s.loc):'—')+'</div></div><div class="kv"><div class="k">Start month</div><div class="v mono">'+effStart(s)+'</div></div><div class="kv"><div class="k">Category</div><div class="v">'+(CAT[s.cat]||'—')+'</div></div><div class="kv"><div class="k">Handler</div><div class="v">'+esc(s.handler||'—')+'</div></div><div class="kv"><div class="k">Reliability</div><div class="v mono">'+(s.rel||'?')+' — '+(REL[s.rel]||'')+'</div></div><div class="kv"><div class="k">Access</div><div class="v">'+'●'.repeat(s.access||0)+'○'.repeat(5-(s.access||0))+'</div></div><div class="kv"><div class="k">Motive</div><div class="v">'+mice+'</div></div><div class="kv" style="border:none"><div class="k">Notes</div><div class="v">'+esc(s.notes||'—')+'</div></div></div>'+
@@ -414,7 +436,7 @@ function cycleAction(srcId,n){
   mb.classList.add('on');
 }
 function afterCycle(srcId){save();closeModal();if(document.getElementById('v-detail').classList.contains('active'))openDetail(srcId);else renderMonitor();}
-function payCycle(srcId,n){const s=DB.sources.find(x=>x.id===srcId);const amt=+s.monthlyPay||0;if(!(amt>0)){alert('No monthly payment set');return;}const bal=totalIn()-totalOut();if(amt>bal&&!confirm('Exceeds fund balance ('+fmt(bal)+'). Continue?'))return;s.payments=(s.payments||[]).filter(p=>!(p.kind==='monthly'&&+p.cycle===n));s.skips=(s.skips||[]).filter(x=>x!==n);s.payments.push({id:uid(),amount:amt,date:today(),kind:'monthly',cycle:n,note:'Monthly #'+n});afterCycle(srcId);}
+function payCycle(srcId,n){const s=DB.sources.find(x=>x.id===srcId);const amt=+s.monthlyPay||0;if(!(amt>0)){alert('No monthly payment set');return;}const pid=principalOf(srcId);const bal=balanceFor(pid);if(amt>bal&&!confirm('Exceeds '+nameOf(pid)+' balance ('+fmt(bal)+'). Continue?'))return;s.payments=(s.payments||[]).filter(p=>!(p.kind==='monthly'&&+p.cycle===n));s.skips=(s.skips||[]).filter(x=>x!==n);s.payments.push({id:uid(),amount:amt,date:today(),kind:'monthly',cycle:n,note:'Monthly #'+n});afterCycle(srcId);}
 function doSkip(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.skips=s.skips||[];if(!s.skips.includes(n))s.skips.push(n);s.payments=(s.payments||[]).filter(p=>!(p.kind==='monthly'&&+p.cycle===n));afterCycle(srcId);}
 function unskip(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.skips=(s.skips||[]).filter(x=>x!==n);afterCycle(srcId);}
 function clearCycle(srcId,n){const s=DB.sources.find(x=>x.id===srcId);s.payments=(s.payments||[]).filter(p=>!(p.kind==='monthly'&&+p.cycle===n));afterCycle(srcId);}
@@ -470,17 +492,24 @@ function zoomAt(vx,vy,factor){const wx=(vx-panX)/zoom,wy=(vy-panY)/zoom;zoom=Mat
 function zoomMap(factor){const svg=document.getElementById('map');const {r,sx,sy}=svgScale();zoomAt((r.width/2)*sx,(r.height/2)*sy,factor);}
 function labelLines(txt){txt=(txt||'').toString();if(txt.length<=17)return [txt];const cut=txt.lastIndexOf(' ',17);const i=cut>6?cut:17;return [txt.slice(0,i).trim(),txt.slice(i).trim().slice(0,18)+(txt.slice(i).trim().length>18?'…':'')].filter(Boolean);}
 function expandAncestors(id){let s=DB.sources.find(x=>x.id===id);while(s&&s.parent){collapsed.delete(s.parent);s=DB.sources.find(x=>x.id===s.parent);}}
-function focusTreeNode(id){
-  selectedTreeId=id;
-  const src=DB.sources.find(x=>x.id===id);if(!src)return;
-  // if the tapped node is in a place we're not viewing, drop the place filter so its branch is visible
-  if(curFilter()&&placeOf(src)!==curFilter()){document.getElementById('placeFilter').value='';}
-  const hasKids=DB.sources.some(s=>s.parent===id);
-  if(hasKids){treeRoot=id;collapsed.delete(id);renderPlaces();}
-  else{expandAncestors(id);layoutTree(curFilter());const n=treeNodes.find(x=>x.id===id);if(n){panX=mapW/2-n.x*zoom;panY=mapH/2-n.y*zoom;}paintTree();}
-}
+function toggleNode(id){if(!DB.sources.some(s=>s.parent===id))return false;collapsed.has(id)?collapsed.delete(id):collapsed.add(id);relayout();return true;}
+function selectNode(id){selectedTreeId=id;toggleNode(id);paintTree();}
+function focusBranch(id){const src=DB.sources.find(x=>x.id===id);if(!src)return;if(curFilter()&&placeOf(src)!==curFilter())document.getElementById('placeFilter').value='';treeRoot=id;selectedTreeId=id;collapsed.delete(id);renderPlaces();}
 function showFullTree(){treeRoot=null;selectedTreeId=null;drawNetMap(curFilter());}
-function updateTreeSelection(){const box=document.getElementById('treeSelection');if(!box)return;const s=DB.sources.find(x=>x.id===selectedTreeId);if(!s&&!treeRoot){box.classList.remove('on');box.innerHTML='';return;}box.classList.add('on');const r=DB.sources.find(x=>x.id===treeRoot);box.innerHTML='<div><div class="name">'+esc((r||s||{}).code||'')+'</div><div class="hint">'+(treeRoot?'Showing this branch only':'Selected in map')+'</div></div><div style="display:flex;gap:6px">'+(treeRoot?'<button class="btn ghost sm" onclick="showFullTree()">Full tree</button>':'')+'<button class="btn ghost sm" onclick="openDetail(\''+((s||r).id)+'\')">Profile</button></div>';}
+function updateTreeSelection(){
+  const box=document.getElementById('treeSelection');if(!box)return;
+  const node=DB.sources.find(x=>x.id===selectedTreeId)||DB.sources.find(x=>x.id===treeRoot);
+  if(!node){box.classList.remove('on');box.innerHTML='';return;}
+  box.classList.add('on');
+  const hasKids=DB.sources.some(x=>x.parent===node.id);
+  const isRoot=treeRoot===node.id;const isCol=collapsed.has(node.id);
+  let btns='';
+  if(treeRoot)btns+='<button class="btn ghost sm" onclick="showFullTree()">Full tree</button>';
+  if(hasKids&&!isRoot)btns+='<button class="btn ghost sm" onclick="focusBranch(\''+node.id+'\')">Focus branch</button>';
+  btns+='<button class="btn sm" onclick="openDetail(\''+node.id+'\')">Profile</button>';
+  const hint=isRoot?'Branch root':(hasKids?(isCol?'Collapsed — tap name to expand':'Expanded — tap name to collapse'):'Leaf node');
+  box.innerHTML='<div><div class="name">'+esc(node.code)+'</div><div class="hint">'+hint+'</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">'+btns+'</div>';
+}
 function paintTree(){
   const svg=document.getElementById('map');const pos=Object.fromEntries(treeNodes.map(n=>[n.id,n]));
   let g='';
@@ -495,10 +524,11 @@ function paintTree(){
       '<rect x="'+(n.x-NW/2)+'" y="'+(n.y-NH/2)+'" width="5" height="'+NH+'" rx="2.5" fill="'+col+'"/>'+txt+'</g>';
     if(n.hasKids){const ty=n.y+NH/2+3;g+='<g class="ttoggle" data-id="'+n.id+'" style="cursor:pointer"><circle cx="'+n.x+'" cy="'+ty+'" r="10.5" fill="#0C1117" stroke="'+col+'" stroke-width="1.4"/><text x="'+n.x+'" y="'+(ty+4.5)+'" fill="'+col+'" font-size="15" font-weight="700" text-anchor="middle">'+(n.isCol?'+':'−')+'</text>'+(n.isCol?'<text x="'+(n.x+16)+'" y="'+(ty+4)+'" fill="#6E7B87" font-size="10" font-family="SFMono-Regular,Menlo,Consolas,monospace" text-anchor="start">'+n.kids.length+'</text>':'')+'</g>';}
   });
-  svg.innerHTML='<g id="stage" transform="translate('+panX+' '+panY+') scale('+zoom+')">'+g+'</g>';updateTreeSelection();
+  svg.innerHTML='<g id="stage" transform="translate('+panX+' '+panY+') scale('+zoom+')">'+g+'</g>';updateTreeSelection();saveUI();
 }
 function svgScale(){const svg=document.getElementById('map');const r=svg.getBoundingClientRect();return {sx:mapW/r.width,sy:mapH/r.height,r};}
 function setupMap(){
+  loadUI();
   const svg=document.getElementById('map');
   const ptrs=()=>Array.from(activePointers.values());
   const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
@@ -530,7 +560,7 @@ function setupMap(){
   });
   const endPointer=e=>{
     activePointers.delete(e.pointerId);
-    if(!moved){if(tapTog){collapsed.has(tapTog)?collapsed.delete(tapTog):collapsed.add(tapTog);relayout();}else if(tapNode){focusTreeNode(tapNode);}}
+    if(!moved){if(tapTog){selectedTreeId=tapTog;toggleNode(tapTog);updateTreeSelection();}else if(tapNode){selectNode(tapNode);updateTreeSelection();}}
     if(activePointers.size<2){pinchStartDist=0;pinchWorld=null;}
     panning=false;tapNode=tapTog=null;
   };
@@ -539,8 +569,8 @@ function setupMap(){
   svg.addEventListener('wheel',e=>{e.preventDefault();const {sx,sy,r}=svgScale();const vx=(e.clientX-r.left)*sx,vy=(e.clientY-r.top)*sy;zoomAt(vx,vy,e.deltaY<0?1.18:0.85);},{passive:false});
 }
 function displayedRootIds(filter){const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);const setIds=new Set(set.map(s=>s.id));if(treeRoot&&setIds.has(treeRoot))return[treeRoot];return set.filter(s=>!s.parent||!setIds.has(s.parent)).map(s=>s.id);}
-function expandAll(){collapsed.clear();layoutTree(curFilter());fitTree();paintTree();}
-function collapseAll(){const filter=curFilter();const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);const roots=new Set(displayedRootIds(filter));set.forEach(s=>{if(set.some(x=>x.parent===s.id)&&!roots.has(s.id))collapsed.add(s.id);});layoutTree(filter);fitTree();paintTree();}
+function expandAll(){collapsed.clear();drawNetMap(curFilter());}
+function collapseAll(){const filter=curFilter();const set=DB.sources.filter(s=>!filter||placeOf(s)===filter);collapsed=new Set(set.filter(s=>set.some(x=>x.parent===s.id)).map(s=>s.id));drawNetMap(curFilter());}
 
 
 const mb=document.getElementById('modalBack'),mbody=document.getElementById('modalBody');
@@ -548,21 +578,27 @@ function closeModal(){mb.classList.remove('on');mbody.innerHTML='';}
 mb.onclick=e=>{if(e.target===mb)closeModal();};
 const val=id=>document.getElementById(id).value;
 function openQuickPay(srcId){
-  const s=DB.sources.find(x=>x.id===srcId);if(!s)return;const bal=totalIn()-totalOut();
+  const s=DB.sources.find(x=>x.id===srcId);if(!s)return;const pid=principalOf(srcId);const bal=balanceFor(pid);
   mbody.innerHTML='<h3>Quick pay — '+esc(s.code)+'</h3>'+
-    '<div style="font-size:12px;color:var(--steel);margin-bottom:8px">Fund balance: <span class="mono">'+fmt(bal)+' '+DB.currency+'</span>'+(s.monthlyPay?' · Monthly: <span class="mono">'+fmt(s.monthlyPay)+'</span>':'')+'</div>'+
+    '<div style="font-size:12px;color:var(--steel);margin-bottom:8px">'+esc(nameOf(pid))+' balance: <span class="mono">'+fmt(bal)+' '+DB.currency+'</span>'+(s.monthlyPay?' · Monthly: <span class="mono">'+fmt(s.monthlyPay)+'</span>':'')+'</div>'+
     '<label>Amount ('+DB.currency+')</label><input id="q-amt" type="number" inputmode="decimal" onkeydown="if(event.key===\'Enter\')quickPay(\''+srcId+'\')">'+
     '<label>Note (optional)</label><input id="q-note" placeholder="purpose">'+
     '<div class="btnrow"><button class="btn gold full" onclick="quickPay(\''+srcId+'\')">Pay now</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>';
   mb.classList.add('on');setTimeout(()=>{const i=document.getElementById('q-amt');if(i)i.focus();},60);
 }
-function quickPay(srcId){const amt=parseFloat(val('q-amt'));if(!(amt>0)){alert('Enter a valid amount');return;}const bal=totalIn()-totalOut();if(amt>bal&&!confirm('Exceeds fund balance ('+fmt(bal)+'). Continue?'))return;const s=DB.sources.find(x=>x.id===srcId);s.payments=s.payments||[];s.payments.push({id:uid(),amount:amt,date:today(),kind:'quick',note:val('q-note').trim()});save();closeModal();if(document.getElementById('v-detail').classList.contains('active'))openDetail(srcId);else if(document.getElementById('v-roster').classList.contains('active'))renderRoster();else if(document.getElementById('v-dash').classList.contains('active'))renderDash();else if(document.getElementById('v-places').classList.contains('active'))renderPlaces();}
+function quickPay(srcId){const amt=parseFloat(val('q-amt'));if(!(amt>0)){alert('Enter a valid amount');return;}const pid=principalOf(srcId);const bal=balanceFor(pid);if(amt>bal&&!confirm('Exceeds '+nameOf(pid)+' balance ('+fmt(bal)+'). Continue?'))return;const s=DB.sources.find(x=>x.id===srcId);s.payments=s.payments||[];s.payments.push({id:uid(),amount:amt,date:today(),kind:'quick',note:val('q-note').trim()});save();closeModal();if(document.getElementById('v-detail').classList.contains('active'))openDetail(srcId);else if(document.getElementById('v-roster').classList.contains('active'))renderRoster();else if(document.getElementById('v-dash').classList.contains('active'))renderDash();else if(document.getElementById('v-places').classList.contains('active'))renderPlaces();}
 function openPay(srcId){const s=DB.sources.find(x=>x.id===srcId);
   mbody.innerHTML='<h3>Manual payment — '+esc(s.code)+'</h3><div class="row2"><div><label>Amount ('+DB.currency+')</label><input id="p-amt" type="number" inputmode="decimal"></div><div><label>Date</label><input id="p-date" type="date" value="'+today()+'"></div></div><label>Type</label><select id="p-kind"><option value="bonus">Bonus</option><option value="ops">Operational</option></select><label>Note</label><input id="p-note" placeholder="purpose"><div class="btnrow"><button class="btn gold" onclick="savePay(\''+srcId+'\')">Pay from fund</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>';mb.classList.add('on');}
-function savePay(srcId){const amt=parseFloat(val('p-amt'));if(!(amt>0)){alert('Enter an amount');return;}const bal=totalIn()-totalOut();if(amt>bal&&!confirm('Exceeds fund balance ('+fmt(bal)+'). Continue?'))return;const s=DB.sources.find(x=>x.id===srcId);s.payments=s.payments||[];s.payments.push({id:uid(),amount:amt,date:val('p-date'),kind:val('p-kind'),note:val('p-note').trim()});save();closeModal();openDetail(srcId);}
+function savePay(srcId){const amt=parseFloat(val('p-amt'));if(!(amt>0)){alert('Enter an amount');return;}const pid=principalOf(srcId);const bal=balanceFor(pid);if(amt>bal&&!confirm('Exceeds '+nameOf(pid)+' balance ('+fmt(bal)+'). Continue?'))return;const s=DB.sources.find(x=>x.id===srcId);s.payments=s.payments||[];s.payments.push({id:uid(),amount:amt,date:val('p-date'),kind:val('p-kind'),note:val('p-note').trim()});save();closeModal();openDetail(srcId);}
 function delPay(srcId,pid){if(!confirm('Delete payment?'))return;const s=DB.sources.find(x=>x.id===srcId);s.payments=(s.payments||[]).filter(p=>p.id!==pid);save();openDetail(srcId);}
-function openDeposit(){mbody.innerHTML='<h3>Deposit to fund</h3><div class="row2"><div><label>Amount ('+DB.currency+')</label><input id="d-amt" type="number" inputmode="decimal"></div><div><label>Date</label><input id="d-date" type="date" value="'+today()+'"></div></div><label>Source / origin</label><input id="d-note" placeholder="where the funding came from"><div class="btnrow"><button class="btn gold" onclick="saveDeposit()">Deposit</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>';mb.classList.add('on');}
-function saveDeposit(){const a=parseFloat(val('d-amt'));if(!(a>0)){alert('Invalid amount');return;}DB.deposits.push({id:uid(),amount:a,date:val('d-date'),note:val('d-note').trim()});save();closeModal();renderDash();}
+function openDeposit(presetPrincipal){
+  const ps=principals();
+  if(!ps.length){alert('Add a principal source first — deposits belong to a principal.');return;}
+  const opts=ps.map(p=>'<option value="'+p.id+'" '+(p.id===presetPrincipal?'selected':'')+'>'+esc(p.code)+' (balance '+fmt(balanceFor(p.id))+')</option>').join('');
+  mbody.innerHTML='<h3>Deposit to a principal</h3><label>Principal</label><select id="d-principal">'+opts+'</select><div class="row2"><div><label>Amount ('+DB.currency+')</label><input id="d-amt" type="number" inputmode="decimal"></div><div><label>Date</label><input id="d-date" type="date" value="'+today()+'"></div></div><label>Source / origin</label><input id="d-note" placeholder="where the funding came from"><div class="btnrow"><button class="btn gold" onclick="saveDeposit()">Deposit</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>';
+  mb.classList.add('on');setTimeout(()=>{const i=document.getElementById('d-amt');if(i)i.focus();},60);
+}
+function saveDeposit(){const a=parseFloat(val('d-amt'));if(!(a>0)){alert('Invalid amount');return;}const principal=val('d-principal')||null;if(!principal){alert('Choose a principal');return;}DB.deposits.push({id:uid(),amount:a,date:val('d-date'),note:val('d-note').trim(),principal});save();closeModal();if(document.getElementById('v-detail').classList.contains('active'))openDetail(principal);else renderDash();}
 function openSrcModal(id,presetParent){
   const s=id?DB.sources.find(x=>x.id===id):{};
   const opt=(o,sel)=>Object.entries(o).map(([k,v])=>'<option value="'+k+'" '+(k===sel?'selected':'')+'>'+v+'</option>').join('');

@@ -24,3 +24,6 @@ Update: Excel-safe bulk paste
 
 
 Update (v6): Tap a name in Places to re-root the tree to that branch (shows only it and its descendants). Use "Full tree" in the selection bar to return to the whole network. Expand all / Collapse now keep the current root. Pinch or the -/+ buttons zoom in to read crowded names.
+
+
+Update (v8): Per-principal balances. Each principal source now has its own purse. Deposits are made to a chosen principal. Main balance on Command = sum of all principal balances (plus any Unallocated legacy deposits). Payments to a source draw from its principal's purse, and over-spend warnings now reference that principal. Older deposits made before this update show under "Unallocated" until you re-deposit them to a principal.
