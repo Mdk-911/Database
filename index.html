@@ -86,6 +86,13 @@ textarea{resize:vertical;min-height:54px}
 .pbal-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
 .pbal-bal{font-weight:700;font-size:16px;color:var(--green)}
 .pbal-bal.neg{color:var(--red)}
+.selbox{width:20px;height:20px;border:1.6px solid var(--line2);border-radius:6px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;color:#04100F;background:var(--panel2)}
+.selbox.on{background:var(--teal);border-color:var(--teal)}
+.el .selbox{width:18px;height:18px}
+#selbar{position:fixed;left:0;right:0;bottom:0;z-index:35;display:none;justify-content:space-between;align-items:center;gap:12px;background:rgba(17,22,29,.97);backdrop-filter:blur(8px);border-top:1px solid var(--line2);padding:12px 18px;max-width:1180px;margin:0 auto}
+#selbar.on{display:flex}
+#selcount{font-size:14px;font-weight:600;color:var(--ink)}
+body.selecting{padding-bottom:64px}
 .toolbar{display:flex;gap:8px;margin-bottom:13px;align-items:center}
 .toolbar input{flex:1}.toolbar select{width:auto}
 .scard{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden}
@@ -238,11 +245,13 @@ table.matrix tbody tr{border-bottom:1px solid var(--line)}
       <option value="">All statuses</option><option value="active">Active</option><option value="dev">Developing</option>
       <option value="dormant">Dormant</option><option value="cutout">Cut-out</option><option value="burned">Burned</option>
     </select>
+    <button class="btn ghost sm" id="selToggle" onclick="toggleSelectMode()">Select</button>
     <button class="btn ghost sm" onclick="openBulkModal()">Bulk</button>
     <button class="btn sm" onclick="openSrcModal()">+ New</button>
   </div>
   <div id="rosterList"></div>
 </section>
+<div id="selbar"><span id="selcount">0 selected</span><div style="display:flex;gap:8px"><button class="btn ghost sm" onclick="clearSel()">Clear</button><button class="btn gold sm" onclick="paySelected()">Pay selected</button></div></div>
 
 <section class="view" id="v-monitor">
   <div class="mon-status" id="monStatus"></div>
@@ -355,13 +364,46 @@ function renderRoster(){
   if(q||fs){let list=DB.sources.filter(s=>(!q||matches(s,q))&&(!fs||s.status===fs));el.innerHTML=list.length?list.map(flatCard).join(''):'<div class="empty">No results</div>';return;}
   const roots=principals();el.innerHTML=roots.length?roots.map(principalCard).join(''):'<div class="empty">No sources. Add a principal source with + New</div>';
 }
+let selectMode=false;const selected=new Set();
+const selCb=id=>selectMode?'<div class="selbox '+(selected.has(id)?'on':'')+'" onclick="event.stopPropagation();toggleSel(\''+id+'\')">'+(selected.has(id)?'✓':'')+'</div>':'';
+function toggleSelectMode(){selectMode=!selectMode;if(!selectMode)selected.clear();document.getElementById('selToggle').classList.toggle('on',selectMode);document.getElementById('selToggle').textContent=selectMode?'Done':'Select';document.body.classList.toggle('selecting',selectMode);renderRoster();updateSelBar();}
+function toggleSel(id){selected.has(id)?selected.delete(id):selected.add(id);renderRoster();updateSelBar();}
+function clearSel(){selected.clear();renderRoster();updateSelBar();}
+function updateSelBar(){const bar=document.getElementById('selbar');const n=selected.size;bar.classList.toggle('on',selectMode&&n>0);document.getElementById('selcount').textContent=n+' selected';}
+function paySelected(){
+  if(!selected.size){alert('Select members first');return;}
+  const ids=[...selected];const list=ids.map(id=>DB.sources.find(s=>s.id===id)).filter(Boolean);
+  const withMonthly=list.filter(s=>s.monthlyPay>0).length;
+  mbody.innerHTML='<h3>Pay '+list.length+' selected</h3>'+
+    '<div style="font-size:12px;color:var(--steel);margin-bottom:8px;max-height:64px;overflow:auto">'+list.map(s=>esc(s.code)).join(' · ')+'</div>'+
+    '<label><input type="checkbox" id="b-mon" style="width:auto;margin-right:6px"'+(withMonthly===list.length?' checked':'')+' onchange="document.getElementById(\'b-amt\').disabled=this.checked"> Use each member\'s monthly payment ('+withMonthly+' have one)</label>'+
+    '<label>Or a flat amount to each ('+DB.currency+')</label><input id="b-amt" type="number" inputmode="decimal"'+(withMonthly===list.length?' disabled':'')+'>'+
+    '<div class="row2"><div><label>Date</label><input id="b-date" type="date" value="'+today()+'"></div><div><label>Type</label><select id="b-kind"><option value="quick">Payment</option><option value="bonus">Bonus</option><option value="ops">Operational</option></select></div></div>'+
+    '<label>Note (optional)</label><input id="b-note" placeholder="applied to all selected">'+
+    '<div class="btnrow"><button class="btn gold" onclick="doPaySelected()">Pay all</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>';
+  mb.classList.add('on');
+}
+function doPaySelected(){
+  const ids=[...selected];const useMon=document.getElementById('b-mon').checked;const flat=parseFloat(val('b-amt'));
+  if(!useMon&&!(flat>0)){alert('Enter an amount or tick "use monthly"');return;}
+  const date=val('b-date'),kind=val('b-kind'),note=val('b-note').trim();
+  // per-principal total to warn on over-spend
+  const byP={};let funded=0;const plan=[];
+  ids.forEach(id=>{const s=DB.sources.find(x=>x.id===id);if(!s)return;const amt=useMon?(+s.monthlyPay||0):flat;if(amt>0){plan.push([s,amt]);const pid=principalOf(id);byP[pid]=(byP[pid]||0)+amt;}});
+  if(!plan.length){alert('Nothing to pay (selected members have no monthly amount).');return;}
+  const over=Object.entries(byP).filter(([pid,sum])=>sum>balanceFor(pid)).map(([pid,sum])=>nameOf(pid)+' (needs '+fmt(sum)+', has '+fmt(balanceFor(pid))+')');
+  if(over.length&&!confirm('These purses will go negative:\n'+over.join('\n')+'\n\nContinue?'))return;
+  plan.forEach(([s,amt])=>{s.payments=s.payments||[];s.payments.push({id:uid(),amount:amt,date,kind,note});funded++;});
+  save();closeModal();selected.clear();updateSelBar();renderRoster();
+  alert('Paid '+funded+' member(s).');
+}
 function moneyTag(s){const od=onStipend(s)?outstandingCount(s):0;return '<div class="money"><div class="tot">'+fmt(srcTotal(s))+'</div>'+(s.monthlyPay?'<div class="mo">'+fmt(s.monthlyPay)+'/mo</div>':'')+(od?'<div class="mo" style="color:var(--red)">'+od+' overdue</div>':'')+'</div>';}
-function flatCard(s){return '<div class="scard"><div class="head"><div class="id" onclick="openDetail(\''+s.id+'\')"><div class="statusdot" style="background:'+STCOLOR[s.status]+'"></div><div><div class="code">'+esc(s.code)+'</div><div class="sub">'+statusPill(s.status)+(s.loc?'<span class="loc">'+esc(s.loc)+'</span>':'')+(s.parent?'<span>under '+esc(nameOf(s.parent))+'</span>':'<span>Principal</span>')+'</div></div></div><div class="right">'+payBtn(s.id)+moneyTag(s)+'</div></div></div>';}
+function flatCard(s){return '<div class="scard"><div class="head">'+selCb(s.id)+'<div class="id" onclick="openDetail(\''+s.id+'\')"><div class="statusdot" style="background:'+STCOLOR[s.status]+'"></div><div><div class="code">'+esc(s.code)+'</div><div class="sub">'+statusPill(s.status)+(s.loc?'<span class="loc">'+esc(s.loc)+'</span>':'')+(s.parent?'<span>under '+esc(nameOf(s.parent))+'</span>':'<span>Principal</span>')+'</div></div></div><div class="right">'+payBtn(s.id)+moneyTag(s)+'</div></div></div>';}
 function descCount(id){let c=0;children(id).forEach(ch=>{c+=1+descCount(ch.id);});return c;}
 function principalCard(s){const ch=children(s.id);const nt=networkTotal(s.id);const dc=descCount(s.id);
-  return '<div class="scard" id="card-'+s.id+'"><div class="head"><div class="id" onclick="openDetail(\''+s.id+'\')"><div class="statusdot" style="background:'+STCOLOR[s.status]+'"></div><div><div class="code">'+esc(s.code)+'</div><div class="sub">'+statusPill(s.status)+(s.loc?'<span class="loc">'+esc(s.loc)+'</span>':'')+'<span>'+dc+' members</span>'+(ch.length?'<span style="color:var(--gold)">Net: '+fmt(nt)+'</span>':'')+'</div></div></div><div class="right">'+payBtn(s.id)+moneyTag(s)+'<button class="chev" onclick="event.stopPropagation();toggleCard(\''+s.id+'\')">›</button></div></div><div class="elements"><div class="elhdr"><span>Sub-elements</span><span class="addel" onclick="openSrcModal(\'\',\''+s.id+'\')">+ Add element</span></div>'+(ch.length?ch.map(c=>elementRow(c,1)).join(''):'<div class="empty" style="padding:12px 0">No elements</div>')+'</div></div>';}
+  return '<div class="scard'+(selectMode?' open':'')+'" id="card-'+s.id+'"><div class="head">'+selCb(s.id)+'<div class="id" onclick="openDetail(\''+s.id+'\')"><div class="statusdot" style="background:'+STCOLOR[s.status]+'"></div><div><div class="code">'+esc(s.code)+'</div><div class="sub">'+statusPill(s.status)+(s.loc?'<span class="loc">'+esc(s.loc)+'</span>':'')+'<span>'+dc+' members</span>'+(ch.length?'<span style="color:var(--gold)">Net: '+fmt(nt)+'</span>':'')+'</div></div></div><div class="right">'+payBtn(s.id)+moneyTag(s)+'<button class="chev" onclick="event.stopPropagation();toggleCard(\''+s.id+'\')">›</button></div></div><div class="elements"><div class="elhdr"><span>Sub-elements</span><span class="addel" onclick="openSrcModal(\'\',\''+s.id+'\')">+ Add element</span></div>'+(ch.length?ch.map(c=>elementRow(c,1)).join(''):'<div class="empty" style="padding:12px 0">No elements</div>')+'</div></div>';}
 function elementRow(s,depth){const ch=children(s.id);const od=onStipend(s)?outstandingCount(s):0;
-  let row='<div class="el"><span class="branch">'+'└─'.padStart(depth*2,'\u00A0\u00A0')+'</span><span class="estatus" style="background:'+STCOLOR[s.status]+'"></span><span class="ecode" onclick="openDetail(\''+s.id+'\')" style="cursor:pointer">'+esc(s.code)+'</span>'+(od?'<span style="color:var(--red);font-size:10px;margin-left:6px">'+od+'⚠</span>':'')+'<span class="etot">'+fmt(srcTotal(s))+'</span>'+(ch.length?'<span style="font-size:11px;color:var(--steel)">'+ch.length+'⊂</span>':'')+payBtn(s.id)+'</div>';
+  let row='<div class="el">'+selCb(s.id)+'<span class="branch">'+'└─'.padStart(depth*2,'\u00A0\u00A0')+'</span><span class="estatus" style="background:'+STCOLOR[s.status]+'"></span><span class="ecode" onclick="openDetail(\''+s.id+'\')" style="cursor:pointer">'+esc(s.code)+'</span>'+(od?'<span style="color:var(--red);font-size:10px;margin-left:6px">'+od+'⚠</span>':'')+'<span class="etot">'+fmt(srcTotal(s))+'</span>'+(ch.length?'<span style="font-size:11px;color:var(--steel)">'+ch.length+'⊂</span>':'')+payBtn(s.id)+'</div>';
   ch.forEach(c=>row+=elementRow(c,depth+1));return row;}
 const toggleCard=id=>document.getElementById('card-'+id).classList.toggle('open');
 

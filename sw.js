@@ -1,4 +1,4 @@
-const CACHE_NAME = 'network-manager-offline-v8-principal-balances';
+const CACHE_NAME = 'network-manager-offline-v9-multipay';
 const ASSETS = [
   './',
   './index.html',
